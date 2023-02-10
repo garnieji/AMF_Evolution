@@ -5,15 +5,15 @@ close all
 %    Michorizer model with frequency dependence and evolution of alpha no space   %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Time parameter
-Tf = 7e1;
+Tf = 5e1;
 %% Parameter of the model
-global q_hp q_cm q_hm q_cp beta mup mui d rp Aa a
+global q_hp q_cm q_hm q_cp beta ALPHA mup mui d rp a Ad_x Ad_alpha Nx Nalpha D_p D_m dm dalpha
 q_hp  = 3; % q>1
 q_cm  = 2;
 q_hm  = 1;
 q_cp  = 1;
 
-beta  = 0.4;
+beta  = 0.7;
 % alpha = beta;
 %% Trait alpha
 alphamin = 0;
@@ -65,7 +65,7 @@ Ad_x = Ad_x/(dx^2);
 D_p = .1;
 D_m = .1;  % diffusion rate
 
-choice_comp = 3;
+choice_comp = 1;
 if (choice_comp == 1)
     %% Functionnal response without competition
     fp = @(alpha,P,M)  P.*( q_hp*rp + (q_hp*sum(alpha.*M*dalpha)./(d+P) -q_cp*beta*sum(M*dalpha) )-mup*P);
@@ -97,43 +97,64 @@ M0 = Minfty'.*(xx<=0);% ((ALPHA'<=0.1).*(ALPHA'>=0))
 
 t = 0; it = 1; 
 dt = 0.01;
-tt = t:dt:Tf;
-Nt = length(tt);
-%% Variables
-PP = zeros(Nt,Nx); MM = zeros(Nalpha,Nx,Nt);
-MM_x = zeros(Nt,Nx); MM_d = zeros(Nt,Nalpha); MM_b = zeros(1,Nt);
-Pnew = P0;  PP = P0;  
-Mnew = M0;
-PP(1,:) = P0;
-MM(:,:,1) = M0;
-MM_x(1,:) = sum(M0)*dalpha; MM_d(1,:) = (sum(M0,2)*dx)';MM_b(1) = sum(sum(M0)*dalpha)*dx;
-for it = 2:Nt
-    Pold = Pnew;Mold = Mnew;
-    
-    Pp = Pold + dt*fp(ALPHA',Pold,Mold);
-    Bp = I_x-dt*D_p*Ad_x;
-    Pnew = Pp/Bp;
-    
+% tt = t:dt:Tf;
+% Nt = length(tt);
+
+%% Soving PDE with ode45
+m0 = M0'; M0= m0(:)';
+X0 = [P0,M0];
+if (choice_comp == 1)
+    [t,X] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_disp_nocomp(y),[0,Tf],X0);
+elseif(choice_comp == 2)
+    [t,X] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_disp_comp_uptake(y),[0,Tf],X0);
+elseif(choice_comp == 3)
+    [t,X] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_disp_comp_maintenance(y),[0,Tf],X0);
+elseif(choice_comp == 4)
+    [t,X] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_disp_comp_strong(y),[0,Tf],X0);
+end 
+tt = t;
+Nt =length(t);
+PP = X(:,1:Nx);
+MM = reshape(X(:,Nx+1:end),[Nt,Nx,Nalpha]);
+MM = permute(MM,[3,2,1]);
+MM_x = permute(sum(MM,1)*dalpha,[3,2,1]);
+MM_d = permute(sum(MM,2)*dx,[3,1,2]);
+MM_b = permute(sum(MM,[1,2])*dalpha*dx,[1,3,2]);
+% %% Variables
+% PP = zeros(Nt,Nx); MM = zeros(Nalpha,Nx,Nt);
+% MM_x = zeros(Nt,Nx); MM_d = zeros(Nt,Nalpha); MM_b = zeros(1,Nt);
+% Pnew = P0;  PP = P0;  
+% Mnew = M0;
+% PP(1,:) = P0;
+% MM(:,:,1) = M0;
+% MM_x(1,:) = sum(M0)*dalpha; MM_d(1,:) = (sum(M0,2)*dx)';MM_b(1) = sum(sum(M0)*dalpha)*dx;
+% for it = 2:Nt
+%     Pold = Pnew;Mold = Mnew;
+%     
+%     Pp = Pold + dt*fp(ALPHA',Pold,Mold);
+%     Bp = I_x-dt*D_p*Ad_x;
+%     Pnew = Pp/Bp;
+%     
+% %     Mm = Mold + dt*fm(ALPHA',Pold,Mold);
+% %     Am = I_alpha-dt*dm*Ad_alpha;
+% %     Bm = I_x-dt*D_m*Ad_x;
+% %     Mnew = Mold/Bm;
+% %     Mnew=Am\Mnew;
+%     
 %     Mm = Mold + dt*fm(ALPHA',Pold,Mold);
 %     Am = I_alpha-dt*dm*Ad_alpha;
 %     Bm = I_x-dt*D_m*Ad_x;
-%     Mnew = Mold/Bm;
-%     Mnew=Am\Mnew;
-    
-    Mm = Mold + dt*fm(ALPHA',Pold,Mold);
-    Am = I_alpha-dt*dm*Ad_alpha;
-    Bm = I_x-dt*D_m*Ad_x;
-%     Mnew = Am\(dt*D_m*Mold*Ad_x+Mm);
-    Mnew = (dt*dm*Ad_alpha*Mold + Mm)/Bm;
- 
-    PP(it,:) = Pnew;
-    MM(:,:,it) = Mnew;
-    MM_xt = sum(Mnew)*dalpha;
-    MM_dt = sum(Mnew,2)*dx;
-    MM_d(it,:) = MM_dt';
-    MM_x(it,:) = MM_xt;
-    MM_b(it) = sum(MM_xt)*dx;
-end
+% %     Mnew = Am\(dt*D_m*Mold*Ad_x+Mm);
+%     Mnew = (dt*dm*Ad_alpha*Mold + Mm)/Bm;
+%  
+%     PP(it,:) = Pnew;
+%     MM(:,:,it) = Mnew;
+%     MM_xt = sum(Mnew)*dalpha;
+%     MM_dt = sum(Mnew,2)*dx;
+%     MM_d(it,:) = MM_dt';
+%     MM_x(it,:) = MM_xt;
+%     MM_b(it) = sum(MM_xt)*dx;
+% end
 
 %% Plot biommass 
 PP_b = sum(PP,2)*dx;
@@ -174,7 +195,11 @@ hold off
 
 %% Plot of M distribution over time over space trait
 MM_d = MM_d./MM_b';
-mean_alpha = permute(sum(ALPHA'.*MM,1)./sum(MM,1),[2,3,1]);
+Im= (sum(MM,1)<=1e-15);
+mean_alpha = sum(ALPHA'.*MM,1)./(sum(MM,1)+(sum(MM,1)<=1e-15));
+mean_alpha(Im) = NaN;
+mean_alpha = permute(mean_alpha,[2,3,1]);
+
 % figure(2)
 % clf
 % plot(aalpha,MM_d(end,:))
@@ -221,8 +246,8 @@ plot(xx,mean_alpha(:,It))
 ylabel('Mean trait of AMF $\displaystyle mean(\alpha)(x) =\int_{\overline\alpha}^{\underline\alpha} {\alpha\,m(t,x,\alpha)\,d\alpha}$','Interpreter', 'latex','FontSize',16)
 yyaxis right
 plot(xx,MM_x(It,:),'-')
-% plot(xx,MM(2,:,It),'-o')
-% plot(xx,MM(20,:,It),'-d')
+plot(xx,MM(2,:,It),'-o')
+plot(xx,MM(20,:,It),'-d')
 plot(xx,PP(It,:),'--')
 ylabel('Density of AMF and plant ','Interpreter', 'latex','FontSize',16)
 xlabel('space $x$','Interpreter','latex','FontSize',16)
