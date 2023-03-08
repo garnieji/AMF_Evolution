@@ -5,185 +5,147 @@ close all
 %    Michorizer model with frequency dependence and evolution of alpha no space   %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Time parameter
-Tf = 300;
+Tf = 5e1;
 %% Parameter of the model
-global q_hp q_cm q_hm q_cp mup mui d rp Aa a Ad_alpha ALPHA dm BETA Ap Ad_beta dp dalpha
+% global q_hp q_cm q_hm q_cp beta ALPHA mup mui d rp Ad_alpha Nalpha dm dalpha
 q_hp  = 3; % q>1
 q_cm  = 2;
 q_hm  = 1;
 q_cp  = 1;
-%% Trait beta
-beta  = 0.4;
-beta_min = 0;
-beta_max = 1;
-dbeta = 0.1;
-% BETA = beta_min:dbeta:beta_max;
-BETA = .6;
-Nbeta = length(BETA);
-% alpha = beta;
-%% Trait alpha
-alphamin = 0;
-alphamax = 10;
-dalpha = 0.1;
-ALPHA  = alphamin:dalpha:alphamax;
-Nalpha = length(ALPHA);
+Q   = q_cm*q_hp/(q_cp*q_hm);
 
-mup = 1/100; % 1/100 %0.3
-mui = 1/20; % 1/20 % 0.03
+mup = 0.3; % 1/100
+mui = 0.3; % 1/20
 
 d = 1.2;
 
-rp = 0;
-%% Competition terms
-a = .2; % 0.1;
-ap = 0.1;
-
+%% Trait alpha
+alphamin = 0;
+alphamax = 5; %max(2*d/Pstar,5);
+dalpha = 0.01;
+ALPHA  = alphamin:dalpha:alphamax;
+Nalpha = length(ALPHA);
 N_AMF = Nalpha;
-N_plant = Nbeta;
-Aa = a*(ones(N_AMF,N_AMF)-diag(ones(1,N_AMF)));
-Ap = ap*(ones(N_plant,N_plant)-diag(ones(1,N_plant)));
 
 
-% Diffusion matrix alpha 
+%% Plant
+rp = 0; %.02;
+betamin = sqrt(4*Q*mup*mui./((Q-1).^2));
+betamax = 13;
+BETA = [linspace(betamin,1,20),linspace(1.1,betamax,20)];
+Nbeta = length(BETA);
+
+%% Equilibrium
+z0  = -fzero(@(x) airy(1,x),0);
+
+PP = zeros(1,Nbeta);
+MM = zeros(Nbeta,Nalpha);
+MM_d = zeros(Nbeta,Nalpha);
+MM_b = zeros(1,Nbeta);
+Abar = zeros(1,Nbeta);
+PP_approx = zeros(1,Nbeta);
+MM_d_approx = zeros(Nbeta,Nalpha);
+MM_b_approx = zeros(1,Nbeta);
+Abar_approx = zeros(1,Nbeta);
+
+%% Diffusion matrix
 e = ones(Nalpha,1);
 I_alpha  = spdiags(e,0,Nalpha,Nalpha);
 Ad_alpha = spdiags([e -2*e e],-1:1,Nalpha,Nalpha);
 Ad_alpha(1,1) = -1;
 Ad_alpha(end,end) = -1;
 Ad_alpha = Ad_alpha/(dalpha^2);
-% Diffusion matrix beta 
-e = ones(Nbeta,1);
-I_beta  = spdiags(e,0,Nbeta,Nbeta);
-Ad_beta = spdiags([e -2*e e],-1:1,Nbeta,Nbeta);
-Ad_beta(1,1) = -1;
-Ad_beta(end,end) = -1;
-Ad_beta = Ad_beta/(dbeta^2);
 
+dm = 0.01;  % mutation rate
 
-dm = 0.1;  % mutation rate AMF
-dp = 0;  % mutation rate plant
-% %% Space x
-% xmin = -10;
-% xmax = 10;
-% dx = 0.1;
-% xx = xmin:dx:xmax;
-% Nx = length(xx);
-% 
-% % Diffusion matrix
-% e = ones(Nx,1);
-% I  = spdiags(e,0,Nx,Nx);
-% Ad_x = spdiags([e -2*e e],-1:1,Nx,Nx);
-% Ad_x(1,1) = -1;
-% Ad_x(end,end) = -1;
-% Ad_x = Ad_x/(dx^2);
+% ib = 30;
+parfor ib = 1:Nbeta
+    beta  = max(betamin,BETA(ib));
+    Pstar  = (Q+1+sqrt( (Q-1)^2 -4*Q*mup*mui./(beta.^2)) )./(2*(beta+mup*mui./beta));
+    
+    
+    
+    %% Functionnal response with competition on maintenance cost (strong)
+    fp = @(alpha,P,M)  P.*( (Q*sum(alpha.*M*dalpha)./(d+P) -beta*sum(M*dalpha))-mup*P);
+    fm = @(alpha,P,M)  M.*( (beta - alpha./(d+P)).*P - mui.*sum(M).*dalpha);
+    F = @(X) [fp(ALPHA',X(1),X(2:end));...
+        dm*Ad_alpha*X(2:end)+fm(ALPHA',X(1),X(2:end))];
+    %% Trait distribution equilibrium
+    p0 = 9;
+    m0 = 4*ones(1,N_AMF);
+    
+    Tfe = 1e2;
+    [T,X] = ode45(@(t,X) F(X),[0,Tfe],[p0,m0]);
+    PP(ib) = X(end,1);
+    M = X(end,2:end);
+    MM(ib,:) = M;
+    M_b = sum(M)*dalpha;
+    MM_b(ib) = M_b;
+    MM_d(ib,:) = M./(M_b);
+    Abar(ib) = sum(ALPHA.*M)./sum(M);
+    %% Approximations
+    %% Equilibrium (P,M) at alpha and beta fixed
+    
+    C = [1,-d/Pstar,0,-(z0)^3*dm];
+    
+    abar_approx = max(abs(roots(C)));
+    P_approx    = abar_approx*Pstar-d;
+    M_b_approx  = P_approx.*(beta-1./Pstar)/mui;
+    eta = (P_approx./(P_approx+d)/dm)^(1/3);
+    M_d_approx = airy( eta*ALPHA-z0 );
+    
+    PP_approx(ib) = P_approx;
+    MM_b_approx(ib) = M_b_approx;
+    MM_d_approx(ib,:) = M_d_approx./sum(M_d_approx*dalpha);
+    Abar_approx(ib) = abar_approx;
+    
+end
 
-% D_p = 0.1;
-% D_m = 0.1;  % diffusion rate
-%% Functionnal response and interactions MARIA
-% sM = @(M) sum(M.*ones(1,N_AMF) - diag(M))'*dalpha;
-% Gamma = @(M) Aa*M./(sM(M)+(sM(M)<=0));
-% fp = @(alpha,P,M) P.*(q_hp*rp + q_hp*sum(alpha.*M)*dalpha./(d+P) ...
-%     -q_cp*beta*sum(M.*Gamma(M)./(Gamma(M) + sM(M) + ((Gamma(M) + sM(M))<=0) ))*dalpha ...
-%     -mup*P) ;
-% sM = @(M) sum(M.*ones(1,N_AMF) - diag(M))';
-% Gamma = @(M) Aa*M./(sM(M)+(sM(M)<=0));
-% fp = @(alpha,P,M) P.*(q_hp*rp + q_hp*sum(alpha.*M)./(d+P) ...
-%     -q_cp*beta*sum(M.*Gamma(M)./(Gamma(M) + sM(M) + ((Gamma(M) + sM(M))<=0) )) ...
-%     -mup*P) ;
-% fm = @(alpha,P,M) M.*( (q_cm*beta*Gamma(M)./(Gamma(M) + sM(M) + ((Gamma(M) + sM(M))<=0) )...
-%     - q_hm*alpha./(d+P)).*P - mui.*M );
-
-%% Initial data
-P0 = 0.1*rand(1,N_plant);
-M0 = 0.1*rand(1,N_AMF);
-% M0 = 0.1*(ALPHA>1);
-t = 0; it = 0; 
-tt = t;
-dt = 0.1;
-Pnew = P0';  PP = P0;  
-Mnew = M0'; MM = M0;
-%% Explicit sceme
-% MM_b = sum(M0);
-% MM_d_new = MM./MM_b; MM_d_old = 0;
-% while (t<Tf)&&(sum(abs(MM_d_new-MM_d_old))>1e-6)
-%     Pold = Pnew; Mold = Mnew; MM_d_old = MM_d_new;
-%     Pnew = Pold + dt*fp(ALPHA',Pold,Mold);
-%     Mnew = (I -  dt*dm*Ad_alpha)\(Mold + dt*fm(ALPHA',Pold,Mold));
-%     MM_d_new = Mnew'./sum(Mnew);
-%  
-%     it = it + 1; t = t+dt;
-%     tt = [tt;t];
-%     PP = [PP;Pnew];
-%     MM = [MM;Mnew'];
-%     MM_bt = sum(Mnew);
-%     MM_b = [MM_b;MM_bt];
-%     
-% end
-%% ode45 scheme competition
-X0 = [P0,M0];
-[t,X] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_comp_continuous(y),[0,Tf],X0);
-tt = 0:dt:Tf;
-PP = interp1(t,X(:,1),tt);
-MM = interp1(t,X(:,2:end),tt);
-MM_b = sum(MM,2);
-
-%% ode45 scheme no competition
-% X0 = [P0,M0];
-% [t,X_nc] = ode45(@(t,y) Func_AMF_Plant_evol_alpha_nodisp(y),[0,Tf],X0);
-% tt_nc = 0:dt:Tf;
-% PP_nc = interp1(t,X(:,1),tt);
-% MM_nc = interp1(t,X(:,2:end),tt);
-% MM_b_nc = sum(MM,2);
-
-%% Plot biommass 
-% PP_b = sum(PP,2)*dx;
+%% Plot of  equilibrium M distribution over space trait
+Existence = BETA*d/Q;
 
 figure(1)
 clf
+yyaxis left
+scatter(BETA,PP,'d','filled')
 hold on
-plot(tt,PP,'--')
-plot(tt,MM_b,'-o')
-% xlim([0,Tf])
-drawnow
-hold off
+scatter(BETA,MM_b,'filled')
+plot(BETA,PP_approx,'--','LineWidth',1)
+plot(BETA,MM_b_approx,'-','LineWidth',1)
+ylabel('Plant and AMF biomasses','Interpreter','latex')
+yyaxis right
+hold on
+plot(BETA,Existence,'k-','LineWidth',2)
+scatter(BETA,Abar,'filled')
+plot(BETA,Abar_approx,'-','LineWidth',1)
 
-%% Plot of M distribution over time over space trait
-MM_d = MM./(MM_b*dalpha);
+ylabel('Mean trait $\overline{\alpha}$ of AMF community','Interpreter','latex')
+xlim([0,betamax])
+xlabel('Carbon supply rate ($\beta$)','Interpreter','latex')
+% saveas(gca,'fig_biomass_mean_trait_beta.eps','epsc')
+
+
+%%
+Id = [4,20,30,40];
+Ia = 1:10:Nalpha;
+bluegradient = ["#00008b"; "#1d289b"; "#314fac"; "#5877bd"; "#759fcd"; "#92c6de"; "#afeeee"];
+p = zeros(1,length(Id));
+dp = cell(1,length(Id));
 figure(2)
 clf
-
-for i = 1:10:length(tt)
-plot(ALPHA,MM_d(end,:))
 hold on
-plot(ALPHA,MM_d(i,:))
-drawnow
-hold off
-% pause
+for im = 1:length(Id)
+    p(im) = scatter(ALPHA(Ia),MM_d(Id(im),Ia),'filled','MarkerFaceColor',bluegradient(im));%, 'DisplayName', ['\beta=', num2str(BETA(im))]) %,'LineWidth', 1
+    dp{im} = ['\beta=', num2str(BETA(Id(im)))];
+    plot(ALPHA,MM_d_approx(Id(im),:),'-','LineWidth',1.5,'color',bluegradient(im))
 end
-% ylim([0,3e-3])
-
-% for It = 1:10:length(tt)
-%     figure(3)
-%     clf
-%     hold on
-%     plot(xx,MM_d(It,:),'-')
-%     drawnow
-%     pause(0.1)
-%     hold off
-%     
-% %     figure(5)
-% %     clf
-% %     yyaxis left
-% %     Fm = fm(PP(It,:),MM(It,:));
-% %     plot(xx,Fm)
-% % %     axis([xmin,xmax,0,max(Fm,1)])
-% %     yyaxis right
-% %     plot(xx,MM(It,:))
-% %     axis([xmin,xmax,0,1.01*mc_sstar])
-% %     drawnow
-% end
-
-
+legend(p,dp)
+% line([Abar,Abar],[0.2,1.8])
+% line([Abar_approx,Abar_approx],[0.2,1.8],'color','r')
+ylim([0,2.5])
+ylabel('Trait distribution in the AMF community','Interpreter','latex')
+xlabel('AMF trait ($\alpha$)','Interpreter','latex')
+% saveas(gca,'fig_distrib_alpha.eps','epsc')
 
 
 
